@@ -25,20 +25,75 @@ function arx{T,V1,V2,S,U}(
 #  mse       = _mse(data, model, x, options)
   modelfit  = _modelfit(mse, data.y)
   idinfo    = OneStepIdInfo(mse, modelfit, model)
-  a,b,f,c,d = _getpolys(model, x)
+  a,b,f,c,d = _getARXpolys(model, x)
 
   IdMFD(a, b, c, d, f, data.Ts, idinfo)
 end
 
-function predict{T1,V1,V2,V3<:AbstractVector,S,U}(
-    data::IdDataObject{T1,V1,V2}, model::PolyModel{S,U,ARX}, x::V3,
-    options::IdOptions=IdOptions(estimate_initial=false))
-  return _predict_arx(data, model, x, options)
+function _getARXpolys{T<:Real,S}(model::PolyModel{S,
+    FullPolyOrder{S},ARX}, x::Vector{T})
+  na,nb,nf,nc,nd,nk = orders(model)
+  ny,nu = model.ny, model.nu
+
+  m  = ny*(na+nf+nc+nd)+nu*nb
+  xr = reshape(x[1:m*ny], m, ny)
+  xrt = xr.'
+
+  nmax = max(na+1,nb+nk[1])
+  Am = zeros(T,ny,ny,nmax)
+  Bm = zeros(T,ny,nu,nmax)
+  for i in 1:na
+    Am[:,:,nmax-i] = xrt[:,(i-1)*ny+(1:ny)]
+  end
+  for i in 1:nb
+    Bm[:,:,nb+nk[1]-i] = xrt[:,ny*na+(i-1)*nu+(1:nu)]
+  end
+  Am[:,:,end] = eye(T,ny)
+
+  # zero pad vectors
+  A = PolyMatrix(Am, :z)
+  B = PolyMatrix(Bm, :z)
+  F = PolyMatrix(eye(T,ny), (ny,ny), :z)
+  C = PolyMatrix(eye(T,ny), (ny,ny), :z)
+  D = PolyMatrix(eye(T,ny), (ny,ny), :z)
+
+  return A,B,F,C,D
 end
+
+function _getpolysqi{T<:Real,S,M}(model::PolyModel{S,
+    FullPolyOrder{S},M}, x::Vector{T})
+  na,nb,nf,nc,nd,nk = orders(model)
+  ny,nu = model.ny, model.nu
+
+  m  = ny*(na+nf+nc+nd)+nu*nb
+  xr = reshape(x[1:m*ny], m, ny)
+
+  xa = _blocktranspose(view(xr,                       1:ny*na, :), ny, ny, na)
+  xb = _blocktranspose(view(xr, ny*na+              (1:nu*nb), :), ny, nu, nb)
+  xf = _blocktranspose(view(xr, ny*na+nu*nb+        (1:ny*nf), :), ny, ny, nf)
+  xc = _blocktranspose(view(xr, ny*(na+nf)+nu*nb+   (1:ny*nc), :), ny, ny, nc)
+  xd = _blocktranspose(view(xr, ny*(na+nf+nc)+nu*nb+(1:ny*nd), :), ny, ny, nd)
+
+  # zero pad vectors
+  A = PolyMatrix(vcat(eye(T,ny),         xa), (ny,ny), :z̄)
+  B = PolyMatrix(vcat(zeros(T,ny*nk[1],nu), xb), (ny,nu), :z̄) # TODO fix nk
+  F = PolyMatrix(vcat(eye(T,ny),         xf), (ny,ny), :z̄)
+  C = PolyMatrix(vcat(eye(T,ny),         xc), (ny,ny), :z̄)
+  D = PolyMatrix(vcat(eye(T,ny),         xd), (ny,ny), :z̄)
+
+  return A,B,F,C,D
+end
+
+# function predict{T1,V1,V2,V3<:AbstractVector,S,U}(
+#     data::IdDataObject{T1,V1,V2}, model::PolyModel{S,U,ARX}, x::V3,
+#     options::IdOptions=IdOptions(estimate_initial=false))
+#   return _predict_arx(data, model, x, options)
+# end
 
 function _predict_arx{T1,V1,V2,T2,S,U}(data::IdDataObject{T1,V1,V2},
     model::PolyModel{S,U,ARX},Θ::AbstractVector{T2},
     options::IdOptions=IdOptions(estimate_initial=false))
+  na,nb,nf,nc,nd,nk = orders(model)
   T = promote_type(T1, T2)
   m = max(na, nb+nk-1)
   estimate_initial = options.estimate_initial
@@ -118,7 +173,7 @@ function _arx{T,A1,A2,S,U}(
   # get Θ in the form Θ = [A₁ᵀ A₂ᵀ… B₁ᵀ B₂ᵀ …]ᵀ
   Θᵣ = zeros(T, nb*nu+na*ny,ny)
   for k = 1:na
-    idx = (k-1)*2ny+(1:ny)
+    idx = (k-1)*ny+(1:ny)
     Θᵣ[(k-1)*ny+(1:ny),:] = Θ[idx,:]
   end
   for k = 1:nb

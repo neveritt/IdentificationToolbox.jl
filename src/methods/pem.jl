@@ -44,17 +44,16 @@ function pem{S<:PolyModel, T1<:Real, T2<:Real,V1,V2}(
   last_x  = ones(T2,k)
   last_V  = -ones(T2,1)
 
-
-  opt::Optim.OptimizationResults
-  if !options.OptimizationOptions.autodiff
+  if options.autodiff ∈ Set([:finite,:forward,:backward])
+    df  = TwiceDifferentiable(x -> cost(data, model, x, options), options.autodiff)
+    opt = optimize(x->cost(data, model, x, options), x0, Newton(),
+      options.OptimizationOptions)
+  else
     storage = zeros(k, k+1)
     df = TwiceDifferentiable(x -> cost(data, model, x, options),
     (x,g) -> g!(data, model, x, last_x, last_V, g, storage, options),
     (x,H) -> h!(data, model, x, last_x, last_V, H, storage, options))
     opt = optimize(df, x0, Newton(), options.OptimizationOptions)
-  else
-    opt = optimize(x->cost(data, model, x, options),
-          x0, Newton(), options.OptimizationOptions)
   end
 
   mse       = _mse(data, model, opt.minimizer, options)
@@ -64,6 +63,37 @@ function pem{S<:PolyModel, T1<:Real, T2<:Real,V1,V2}(
   A,B,F,C,D = _getpolys(model, Θₚ)
   _getmodel(A,B,F,C,D,data.Ts,idinfo,model)
   #IdMFD(A,B,F,C,D,data.Ts,idinfo)
+end
+
+function pem{S,U<:FullPolyOrder,M,T1,T2,V1,V2}(
+    data::IdDataObject{T1,V1,V2}, model::PolyModel{S,U,M}, x0::AbstractVector{T2},
+    solver::AbstractMathProgSolver; options::IdOptions=IdOptions())
+
+  d   = FullPolyProblem(data,model,options)
+  n   = length(x0)
+  l   = -Inf*ones(n)
+  u   = Inf*ones(n)
+  lb  = Float64[]
+  ub  = Float64[]
+  numconst = 0
+
+  # perform optimization
+  m = NonlinearModel(solver)
+  loadproblem!(m, n, numconst, l, u, lb, ub, :Min, d)
+  setwarmstart!(m, x0)
+  optimize!(m)
+  if status(m) != :Optimal
+    warn("pem: solution not optimal")
+    # throw(InvalidStateException())
+  end
+  x = getsolution(m)
+
+  mse       = _mse(data, model, x, options)
+  modelfit  = _modelfit(mse, data.y)
+  idinfo    = OneStepIdInfo(mse, modelfit, model)
+  Θₚ,icbf,icdc,iccda = _split_params(model, x, options)
+  A,B,F,C,D = _getpolys(model, Θₚ)
+  _getmodel(A,B,F,C,D,data.Ts,idinfo,model)
 end
 
 # methods needed until ControlCore is updated with proper TransferFunction Type
@@ -96,11 +126,11 @@ function _getpolys{T<:Real,S,M}(model::PolyModel{S,
   xd = _blocktranspose(view(xr, ny*(na+nf+nc)+nu*nb+(1:ny*nd), :), ny, ny, nd)
 
   # zero pad vectors
-  A = PolyMatrix(vcat(eye(T,ny),         xa), (ny,ny), :z̄)
-  B = PolyMatrix(vcat(zeros(T,ny*nk[1],nu), xb), (ny,nu), :z̄) # TODO fix nk
-  F = PolyMatrix(vcat(eye(T,ny),         xf), (ny,ny), :z̄)
-  C = PolyMatrix(vcat(eye(T,ny),         xc), (ny,ny), :z̄)
-  D = PolyMatrix(vcat(eye(T,ny),         xd), (ny,ny), :z̄)
+  A = PolyMatrix(vcat(zeros(T,ny*nk[1], ny), xa, eye(T,ny)), (ny,ny))
+  B = PolyMatrix(vcat(zeros(T,ny*nk[1], nu), xb), (ny,nu)) # TODO fix nk
+  F = PolyMatrix(vcat(zeros((nk[1]+nb-nf)*ny, ny), xf, eye(T,ny)), (ny,ny))
+  C = PolyMatrix(vcat(xc, eye(T,ny)), (ny,ny))
+  D = PolyMatrix(vcat(xd, eye(T,ny)), (ny,ny))
 
   return A,B,F,C,D
 end
@@ -121,29 +151,99 @@ function _modelfit{T<:Real}(mse, y::AbstractMatrix{T})
   modelfit = [100*(1 - mse[i]/cov(y[i,1:N])) for i in 1:ny] # TODO fix to correct order m y[m:N]
 end
 
-predict{T1,V1,V2}(data::IdDataObject{T1,V1,V2}, sys::IdMFD) =
-  _predict(data,sys.A,sys.B,sys.F,sys.C,sys.D,sys.info.model)
-
-
 function predict{T1,V1,V2,S,U,M,T2,O}(data::IdDataObject{T1,V1,V2},
   model::PolyModel{S,U,M}, Θ::AbstractVector{T2}, options::IdOptions{O}=IdOptions())
   Θₚ,icbf,icdc,iccda = _split_params(model, Θ, options)
   a,b,f,c,d          = _getpolys(model, Θₚ)
 
-  return _predict(data,a,b,f,c,d,model,icbf,icdc,iccda)
   na,nb,nf,nc,nd,nk  = orders(model)
 
-  ny   = data.ny
-  nbf  = max(nb, nf)
-  ndc  = max(nd, nc)
-  ncda = max(nc, nd+na)
+  Ts = data.Ts
+  G  = lfd(b, f, 1)
+  Hi = lfd(d, c, 1)
+  CD = lfd(c-PolynomialMatrices._mulconv(d,a), c, 1) # FFT does not support dual numbers
+  # c-d in numerator
 
-  # save unnecessary computations
-  temp  = nbf > 0 ? filt(b, f, data.u, icbf) : data.u
-  temp2 = ndc > 0 ? filt(d, c, temp, icdc) : temp
-  temp3 = ncda > 0 ? temp2 + filt(c-d*a, c, data.y, iccda) : temp2
-  return temp3 # 10.53 [Ljung1999]
+  time = (0., (data.N-1))
+  nbf = numstates(G)
+  ndc = numstates(Hi)
+  ncda = numstates(CD)
+
+  dummyt = collect(0:data.N-1)
+  dummyx = data.u.'
+  dummyu = dummyx
+  resp = nbf > 0 ? simulate(G, time; input = (t,x)->data.u[:,convert(Int,round(t+1))],
+    initial = icbf) : SystemsBase.TimeResponse(dummyt, dummyx, data.u.', dummyu)
+
+  resp2 = ndc > 0 ? simulate(Hi, time; input = (t,x)->resp.y[convert(Int,round(t+1)),:],
+      initial = icdc) : resp
+
+  resp3 = ncda > 0 ? simulate(CD, time; input = (t,x)->data.y[:,convert(Int,round(t+1))],
+    initial = iccda) : SystemsBase.TimeResponse(dummyt, dummyx, zeros(data.y.'), dummyu)
+
+  yhat = (resp2.y).' + (resp3.y).' # 10.53 [Ljung1999]
 end
+
+#   nbf = numstates(G)
+#  ndc = numstates(Hi)
+#  ncda = numstates(CD)
+# if nbf > 0
+#   resp = simulate(G, time; input = (t,x)->data.u[:,convert(Int,round(t+1))],
+#     initial = icbf)
+#   temp = Matrix{eltype(resp.y)}(data.ny, data.N)
+#   for i in eachindex(resp.y)
+#     temp[:,i] = resp.y[i,:]
+#   end
+# else
+#   temp = data.u
+# end
+#
+# if ndc > 0
+#   resp2 = simulate(Hi, time; input = (t,x)->temp[:,convert(Int,round(t+1))],
+#     initial = icdc)
+#   temp2 = Matrix{eltype(resp2.y)}(data.ny, data.N)
+#   for i in eachindex(resp2.y)
+#     temp2[:,i] = resp2.y[i]
+#   end
+# else
+#   temp2 = temp
+# end
+#
+# if ncda > 0
+#   resp3 = simulate(CD, time; input = (t,x)->data.y[:,convert(Int,round(t+1))],
+#    initial = iccda)
+#   temp3 = Matrix{eltype(resp3.y)}(data.ny, data.N)
+#   for i in eachindex(resp3.y)
+#     temp3[:,i] += resp3.y[i]
+#   end
+# else
+#   temp3 = data.y
+# end
+# return temp2 + temp3 # 10.53 [Ljung1999]
+
+
+predict{T1,V1,V2}(data::IdDataObject{T1,V1,V2}, sys::IdMFD) =
+  _predict(data,sys.A,sys.B,sys.F,sys.C,sys.D,sys.info.model)
+
+# function predict{T1,V1,V2,S,U,M,T2,O}(data::IdDataObject{T1,V1,V2},
+#   model::PolyModel{S,U,M}, Θ::AbstractVector{T2}, options::IdOptions{O}=IdOptions())
+#   Θₚ,icbf,icdc,iccda = _split_params(model, Θ, options)
+#   a,b,f,c,d          = _getpolys(model, Θₚ)
+#
+#   return _predict(data,a,b,f,c,d,model,icbf,icdc,iccda)
+#   na,nb,nf,nc,nd,nk  = orders(model)
+#
+#   ny   = data.ny
+#   nbf  = max(nb, nf)
+#   ndc  = max(nd, nc)
+#   ncda = max(nc, nd+na)
+#
+#   # save unnecessary computations
+#   temp  = nbf > 0 ? filt(b, f, data.u, icbf) : data.u
+#   temp2 = ndc > 0 ? filt(d, c, temp, icdc) : temp
+#   temp3 = ncda > 0 ? temp2 + filt(c-d*a, c, data.y, iccda) : temp2
+#   return temp3 # 10.53 [Ljung1999]
+# end
 
 function _predict{T1,V1,V2,S,U,M}(data::IdDataObject{T1,V1,V2},a,b,f,c,d,
   model::PolyModel{S,U,M},icbf=zeros(T1,0,0),
@@ -177,17 +277,17 @@ function _split_params{S,U,M,O,T}(model::PolyModel{S,U,M}, Θ::AbstractArray{T},
   na,nb,nf,nc,nd,nk = orders(model)
 
   ny,nu = model.ny,model.nu
-  nbf   = max(nb, nf)
+  nbf   = max(nb+nk[1], nf)
   ndc   = max(nd, nc)
   ncda  = max(nc, nd+na)
   m     = ny^2*(na+nf+nc+nd)+nu*ny*nb
   mi    = (ndc+nbf+ncda)*ny
 
   Θₚ = Θ[1:m]
-  Θᵢ = options.estimate_initial ? Θ[m+1:m+mi] : zeros(T,mi)
-  icbf  = nbf > 0  ? reshape(Θᵢ[1:nbf*ny], ny*nk[1], nbf)            : zeros(T,0,0)  # TODO fix nk
-  icdc  = ndc > 0  ? reshape(Θᵢ[nbf*ny+(1:ndc*ny)], ny, ndc)         : zeros(T,0,0)
-  iccda = ncda > 0 ? reshape(Θᵢ[(nbf+ndc)*ny+(1:ncda*ny)], ny, ncda) : zeros(T,0,0)
+  Θᵢ = options.estimate_initial ? Θ[m+1:m+mi]     : zeros(T,mi)
+  icbf  = nbf > 0  ? Θᵢ[1:nbf*ny]                 : zeros(T,nbf*ny)  # TODO fix nk
+  icdc  = ndc > 0  ? Θᵢ[nbf*ny+(1:ndc*ny)]        : zeros(T,ndc*ny)
+  iccda = ncda > 0 ? Θᵢ[(nbf+ndc)*ny+(1:ncda*ny)] : zeros(T,ncda*ny)
   return Θₚ, icbf, icdc, iccda
 end
 
@@ -235,9 +335,9 @@ function _getmatrix{T<:Real,S,M}(model::PolyModel{S,
   for i = 1:ny
     for j = 1:ny
       if i == j
-        A[i,j] = vcat(ones(T,1), a[ma+(1:na[i,j])])
-        C[i]   = vcat(ones(T,1), a[ma+(1:na[i,j])])
-        D[i]   = vcat(ones(T,1), a[ma+(1:na[i,j])])
+        A[i,j] = vcat(zeros(T,nk[i,j]), a[ma+(1:na[i,j])], ones(T,1))
+        C[i]   = vcat(a[ma+(1:na[i,j])], ones(T,1))
+        D[i]   = vcat(a[ma+(1:na[i,j])], ones(T,1))
         ma  += na[i,j]
         mc  += nc[i]
         md  += nd[i]
@@ -247,8 +347,8 @@ function _getmatrix{T<:Real,S,M}(model::PolyModel{S,
       end
     end
     for j = 1:nu
-      B[i,j] = vcat(zeros(T,nk[i,j]), b[mb+(1:nb[i,j])])
-      F[i,j] = vcat(ones(T,1), f[mf+(1:nf[i,j])])
+      B[i,j] = vcat(b[mb+(1:nb[i,j])], zeros(T,nk[i,j]))
+      F[i,j] = vcat(f[mf+(1:nf[i,j])], ones(T,1))
       mb    += nb[i,j]
       mf    += nf[i,j]
     end

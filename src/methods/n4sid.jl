@@ -156,7 +156,7 @@ end
 
 #=
 Impose stability on the estimated system by adding a regularization term.
-This is equivalent to minimizing ||AX - BU||^2 + c||A||^2 (in Forbenius norm).
+This is equivalent to minimizing ||AX - BU||^2 + c||A||^2 (in Frobenius norm).
 `c` is picked so that the spectral radius of `Ahat` is exactly `gamma`
 (i.e. the modified estimate is guaranteed to be stable for `gamma` < 1).
 

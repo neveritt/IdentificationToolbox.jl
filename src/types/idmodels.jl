@@ -158,11 +158,11 @@ Define the FIR(`nb`) model structure:
     y(t) = B(z) z^-`nk`u(t) + e(t)
 """
 function FIR(nb::Int, nk::Int, ny::Int=1, nu::Int=1)
-  _FIR(nb, [nk], ny, nu)
+  _FIR(Val{:siso}, nb, [nk], ny, nu)
 end
 
 function FIR(nb::Int, nk::Vector{Int}, ny::Int=1, nu::Int=1)
-  _FIR(nb, nk, ny, nu)
+  _FIR(Val{:mimo}, nb, nk, ny, nu)
 end
 
 function _FIR{S}(::Type{Val{S}}, nb::Int, nk::Vector{Int}, ny::Int=1, nu::Int=1)
@@ -375,6 +375,9 @@ function _mpolyordercheck(na,nb,nf,nc,nd,nk)
   end
   if sum(na.+nb.+nf.+nc.+nd) < 1
     warn("FullPolyOrder: at least one model order must be greater than zero")
+    @show na
+    @show nf
+    @show nb
     throw(DomainError())
   end
   ny,nu = size(nb)

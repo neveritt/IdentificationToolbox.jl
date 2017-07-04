@@ -5,6 +5,19 @@ using Polynomials, Optim, PolynomialMatrices, SystemsBase, ToeplitzMatrices,
 
 import Base: ==, size, length, getindex
 
+# Import automatic differentiation
+using Calculus
+using ForwardDiff
+#using ReverseDiff
+
+# Import MathProgBase interfaces
+import MathProgBase: eval_grad_f, eval_f, eval_g, features_available, initialize
+import MathProgBase: hesslag_structure, eval_hesslag
+
+using MathProgBase: loadproblem!, NonlinearModel, setwarmstart!, optimize!
+using MathProgBase: status, AbstractNLPEvaluator, AbstractMathProgSolver
+using MathProgBase: getsolution
+
 # Import printing functions
 import Base: showcompact, show, showall, summary
 import ControlToolbox.dare
@@ -56,12 +69,15 @@ include("types/idinfo.jl")
 include("types/idmfd.jl")
 include("types/idstatespace.jl")
 include("types/options.jl")
+include("types/printing.jl")
+include("types/optimizationproblems/FullPolyProblem.jl")
 
 # utilities
 #include("utilities/filt.jl")
 include("utilities/filtic.jl")
 include("utilities/detrend.jl")
 include("utilities/compare.jl")
+include("utilities/numparams.jl")
 
 # methods
 include("methods/pem.jl")
