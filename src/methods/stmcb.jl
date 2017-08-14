@@ -55,7 +55,10 @@ function _stmcb{T,A1,A2,S,U}(
     b  = Θᵣ[ny*nf+(1:nb*nu),1:ny]
 
     x  = vcat(b, f, c, d)
-    pe = cost(data, bjmodel, x[:], options)
+    # pe = cost(data, bjmodel, x[:], options)
+    F  = PolyMatrix(vcat(eye(T,ny),      _blocktranspose(f, ny, ny, nf)), (ny,ny))
+    B  = PolyMatrix(vcat(zeros(T,ny,nu), _blocktranspose(b, ny, nu, nb)), (ny,nu))
+    pe = cost(data.y, filt(B,F,data.u), data.N, options)
 
     if pe < bestpe
       bestb = b

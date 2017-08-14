@@ -1,4 +1,4 @@
-function numparams{S,P}(model::IdentificationToolbox.PolyModel{S,<:FullPolyOrder,P}, options::IdOptions=IdOptions())
+function numparams{S,P,O<:FullPolyOrder}(model::IdentificationToolbox.PolyModel{S,O,P}, options::IdOptions=IdOptions())
   na,nb,nf,nc,nd,nk = IdentificationToolbox.orders(model)
   ny,nu = model.ny, model.nu
   nbf   = max(nb+nk[1], nf)

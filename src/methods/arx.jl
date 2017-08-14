@@ -187,12 +187,12 @@ end
 
 function _mse{T}(Θ::AbstractMatrix{T}, Φ::AbstractMatrix{T},
   Y::AbstractMatrix{T})
-  return reshape(sumabs2(Φ*Θ-Y,1)/size(Y,1),size(Y,2))
+  return reshape(sum(abs2,Φ*Θ-Y,1)/size(Y,1),size(Y,2))
 end
 
 # Auxilliary methods
 
-function _ls_toeplitz{M1<:BlockToeplitz,M2<:AbstractArray}(Φ::M1, Y::M2)
+function _ls_toeplitz{T}(Φ::BlockToeplitz{T}, Y::AbstractArray{T})
   Q,R = qr(full(Φ))
   return R\(Q.'*Y)
 #  return lstoeplitz(Φ, Y)[1]

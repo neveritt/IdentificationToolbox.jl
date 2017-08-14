@@ -27,7 +27,7 @@ function _morsm{T<:Real,A1,A2,S,ORD<:FullPolyOrder}(
   maxorder  = min(10*max(maximum(nb), maximum(nf)), Int(floor(N/2)))
   orderh    = min(maxorder+10, Int(floor(N/2)))
   nbrorders = min(10, maxorder-minorder+1)
-  ordervec  = convert(Array{Int},round(linspace(minorder, maxorder, nbrorders)))
+  ordervec  = convert(Array{Int},round.(linspace(minorder, maxorder, nbrorders)))
 
   # Model for cost function evaluation using orderh noise model
   if 1 == 1 # only G implemented first
@@ -134,7 +134,7 @@ function _morsm_yi{T<:Real,A1,A2,S,U}(
   maxorder  = min(10*max(maximum(nb), maximum(nf)), Int(floor(N/2)))
   orderh    = min(maxorder+10, Int(floor(N/2)))
   nbrorders = min(10, maxorder-minorder+1)
-  ordervec  = convert(Array{Int},round(linspace(minorder, maxorder, nbrorders)))
+  ordervec  = convert(Array{Int},round.(linspace(minorder, maxorder, nbrorders)))
 
   # High-order model used for high order noise model
   modelₕ     = ARX(orderh, orderh, ones(Int,nu), ny, nu)

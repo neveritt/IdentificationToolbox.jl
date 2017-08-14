@@ -77,7 +77,6 @@ end
 function eval_hesslag(d::FullPolyProblem, H, x, σ, μ)
   d.h!(d.H,x)
   k = 1
-  @show k
   for i in 1:n
     for j in i:n
       H[k] = σ*d.H[i,j]

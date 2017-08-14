@@ -375,9 +375,6 @@ function _mpolyordercheck(na,nb,nf,nc,nd,nk)
   end
   if sum(na.+nb.+nf.+nc.+nd) < 1
     warn("FullPolyOrder: at least one model order must be greater than zero")
-    @show na
-    @show nf
-    @show nb
     throw(DomainError())
   end
   ny,nu = size(nb)

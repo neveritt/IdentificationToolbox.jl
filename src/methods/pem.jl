@@ -138,7 +138,7 @@ end
 function _mse{T<:Real,S<:PolyModel, O}(data::IdDataObject{T}, model::S, x, options::IdOptions{O}=IdOptions())
   y,N     = data.y,data.N
   y_est = predict(data, model, x, options)
-  sumabs2(y-y_est,2)[:]/N
+  sum(abs2,y-y_est,2)[:]/N
 end
 
 function _modelfit{T<:Real}(mse, y::AbstractVector{T})
@@ -335,9 +335,9 @@ function _getmatrix{T<:Real,S,M}(model::PolyModel{S,
   for i = 1:ny
     for j = 1:ny
       if i == j
-        A[i,j] = vcat(zeros(T,nk[i,j]), a[ma+(1:na[i,j])], ones(T,1))
-        C[i]   = vcat(a[ma+(1:na[i,j])], ones(T,1))
-        D[i]   = vcat(a[ma+(1:na[i,j])], ones(T,1))
+        A[i,j] = vcat(ones(T,1), a[ma+(1:na[i,j])])
+        C[i]   = vcat(ones(T,1), a[ma+(1:na[i,j])])
+        D[i]   = vcat(ones(T,1), a[ma+(1:na[i,j])])
         ma  += na[i,j]
         mc  += nc[i]
         md  += nd[i]
@@ -347,8 +347,8 @@ function _getmatrix{T<:Real,S,M}(model::PolyModel{S,
       end
     end
     for j = 1:nu
-      B[i,j] = vcat(b[mb+(1:nb[i,j])], zeros(T,nk[i,j]))
-      F[i,j] = vcat(f[mf+(1:nf[i,j])], ones(T,1))
+      B[i,j] = vcat(zeros(T,nk[i,j]), b[mb+(1:nb[i,j])])
+      F[i,j] = vcat(ones(T,1), f[mf+(1:nf[i,j])])
       mb    += nb[i,j]
       mf    += nf[i,j]
     end
